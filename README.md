@@ -10,11 +10,23 @@ CrewAtlas is an Android app for groups who travel together: a shared world map w
 
 ![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)
 ![Platform: Android](https://img.shields.io/badge/platform-Android-3DDC84)
-![Status: private prototype](https://img.shields.io/badge/status-private%20prototype-orange)
+![Status: source-available prototype](https://img.shields.io/badge/status-source--available%20prototype-orange)
 
-> **Status: functional private prototype, version 0.5.1 (`pubspec.yaml`).** The features are implemented and covered by the tests listed below, but 0.5.1 itself has not yet been verified against real services (see the next note). The prototype is used by a small group of friends, not a production service and **not a safety system**. Source-available for study and noncommercial use, see [License](#license).
+> **Status: functional source-available prototype, version 0.5.1 (`pubspec.yaml`).** The features are implemented and covered by the tests listed below, but 0.5.1 itself has not yet been verified against real services (see the next note). The prototype is used by a small group of friends, not a production service and **not a safety system**. Source-available for study and noncommercial use, see [License](#license).
 >
-> **Verification status:** the latest changes (private media through the Worker, the map loaded directly from MapTiler, EXIF stripping, the new logo) are covered by unit tests, an emulator test suite for the Firestore rules and mocked integration tests only. They have **not been run on a physical device or against real Firebase, Cloudflare or Cloudinary services**. The maintainer's own installation has not been moved to this version.
+> **Verification status** (what was actually run, and where):
+>
+> | Area | Status |
+> |---|---|
+> | Flutter app on an **Android emulator**; Firebase sign-in, Firestore rules in use, trip screens and the MapTiler map | Checked with **test infrastructure**: a separate **test** Firebase project and a MapTiler key (see the screenshots below). |
+> | Cloudflare Worker authorization | Checked **end to end, 40/40 checks**, with a test Worker (Free plan) and the test Firebase project: member token, outsider denial, forged and expired tokens, media-token expiry, no secrets in responses. Run **without** Cloudinary credentials, so Cloudinary endpoints returned a controlled error. |
+> | Cloudinary `authenticated` delivery | Checked by a **separate standalone script** on the maintainer's Free account (authenticated upload, signed URLs, signed transformation; unsigned, public and wrongly signed URLs are denied). This does not involve the Worker or the app. |
+> | Full media path (Flutter app, Worker, Cloudinary): upload, thumbnails, video seek, voice notes, deletion, access revoked after leaving a group | **NOT TESTED.** |
+> | Isolation of a restricted Cloudinary API key from other assets in the same account | **NOT TESTED**, and not assumed. |
+> | Authorization against a second real trip (cross-trip access) | **NOT TESTED** end to end. |
+> | Production infrastructure | **Unchanged** by these tests. The maintainer's own installation has not been moved to this version. |
+>
+> The remaining automated tests (unit tests, the Firestore rules emulator suite, mocked integration tests) are not end-to-end evidence: the mocked scripts run the real Worker code against faked Firebase and Cloudinary.
 
 This repository is an engineering portfolio project. The interesting parts are the security model (Firestore rules with an emulator test suite, a Cloudflare Worker that keeps third-party secrets off the device) and the design under free-tier limits.
 
@@ -159,7 +171,7 @@ flutter analyze && flutter test        # app
 node worker/test.mjs                   # Worker signing (mocked Firestore REST and Firebase keys)
 node worker/media.test.mjs             # private media gateway (mocked Firestore REST and Cloudinary)
 node tools/migrate-media-to-private.test.mjs   # media migration and seeding tools (mocked)
-node tools/e2e.test.mjs                        # backend end-to-end scripts (mocked around the real Worker code)
+node tools/e2e.test.mjs                        # backend check scripts, run against mocks (the real Worker code, faked Firebase and Cloudinary); not end-to-end
 node worker/cloudinary-privacy-check.test.mjs   # safety tests of the manual Cloudinary check script (mocked)
 cd rules-test && npm ci && npm test    # rules on the Firestore emulator (needs Java 21+)
 ```
@@ -192,7 +204,7 @@ Planned, not implemented:
 
 - Run the migration of existing public media to private files (tool ready, not run).
 - Decide on stripping metadata from videos (check script ready, not run).
-- End-to-end run on a test environment (runbook and scripts ready, not run): [docs/phone-test-runbook.md](docs/phone-test-runbook.md).
+- Full media end-to-end run on a test environment (Worker authorization is done, 40/40; Cloudinary isolation and the media path are open): [docs/phone-test-runbook.md](docs/phone-test-runbook.md), [docs/a2-test-worker.md](docs/a2-test-worker.md).
 - Automatic expiry of stale live-location documents.
 - Screenshots of photos, video and voice notes (after the end-to-end run above).
 
