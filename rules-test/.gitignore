@@ -1,0 +1,4 @@
+node_modules/
+firestore.rules
+*.log
+firebase.json

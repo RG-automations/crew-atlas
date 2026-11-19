@@ -1,0 +1,13 @@
+Required Notice: Copyright 2026 RG-automations (https://github.com/RG-automations)
+
+CrewAtlas is source-available software licensed under the PolyForm Noncommercial
+License 1.0.0 (see LICENSE). Commercial use requires a separate license from the
+copyright holder.
+
+Third-party libraries (see pubspec.yaml, pubspec.lock, rules-test/package.json and
+functions/package.json) and external services (Firebase, Cloudflare, Cloudinary,
+MapTiler, OpenStreetMap, NBP) are not covered by this license and remain under
+their own licenses and terms.
+
+The CrewAtlas name and logo (assets/brand/, assets/icon*.png and the Android
+launcher icons) are not offered under the PolyForm license. See docs/branding.md.

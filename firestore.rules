@@ -1,0 +1,125 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+
+    // Profil (nazwa, token FCM) czyta i zapisuje tylko jego właściciel.
+    // Aplikacja nigdy nie czyta cudzych profili (nazwy uczestników są w trips/<id>.memberNames),
+    // a funkcja chmurowa FCM używa Admin SDK, który omija reguły.
+    match /users/{uid} {
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['name', 'fcmToken'])
+          && request.resource.data.name is string;
+    }
+
+    // Kod zaproszenia -> id podróży. Wolno odczytać tylko po znanym kodzie (get), bez listowania.
+    // Wpis można utworzyć tylko dla podróży, której kod i skład członków wynikają z tego samego zapisu
+    // (getAfter widzi też podróż tworzoną w tej samej paczce). Sam wpis niczego nie daje:
+    // dołączenie wymaga zgodności kodu z dokumentem podróży (patrz niżej).
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow create: if signedIn()
+          && request.resource.data.createdBy == request.auth.uid
+          && getAfter(/databases/$(database)/documents/trips/$(request.resource.data.tripId)).data.inviteCode == code
+          && request.auth.uid in getAfter(/databases/$(database)/documents/trips/$(request.resource.data.tripId)).data.memberIds;
+      allow update, delete: if false;
+    }
+
+    match /trips/{tripId} {
+      function tripPath(id) { return /databases/$(database)/documents/trips/$(id); }
+      function isMember() { return signedIn() && request.auth.uid in resource.data.memberIds; }
+      function isMemberOf(id) { return signedIn() && request.auth.uid in get(tripPath(id)).data.memberIds; }
+      function isOwnerOf(id) { return signedIn() && get(tripPath(id)).data.createdBy == request.auth.uid; }
+
+      // Członek może wyłącznie wyjść sam: zmienia tylko memberIds, nikogo nie dopisuje ani nie usuwa.
+      // createdBy, inviteCode i cudze nazwy pozostają nietknięte.
+      function memberLeave() {
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
+            && request.resource.data.memberIds.toSet().hasAll(
+                 resource.data.memberIds.toSet().difference([request.auth.uid].toSet()))
+            && request.resource.data.memberIds.size() <= resource.data.memberIds.size();
+      }
+
+      // Dołączanie: nie-członek dopisuje wyłącznie siebie i podaje kod zgodny z dokumentem podróży.
+      function joining() {
+        return signedIn()
+            && !(request.auth.uid in resource.data.memberIds)
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds', 'memberNames', 'joinCode'])
+            && request.resource.data.joinCode.size() == 6
+            && request.resource.data.joinCode == resource.data.inviteCode
+            && request.resource.data.memberIds.toSet() == resource.data.memberIds.toSet().union([request.auth.uid].toSet())
+            && request.resource.data.memberNames.diff(resource.data.memberNames).affectedKeys().hasOnly([request.auth.uid]);
+      }
+
+      allow create: if signedIn()
+          && request.resource.data.createdBy == request.auth.uid
+          && request.resource.data.memberIds == [request.auth.uid]
+          && request.resource.data.memberNames.keys().hasOnly([request.auth.uid])
+          && request.resource.data.inviteCode is string
+          && request.resource.data.inviteCode.size() == 6;
+      allow read: if isMember();
+      allow update: if (isMember() && memberLeave()) || joining();
+      allow delete: if signedIn() && resource.data.createdBy == request.auth.uid;
+
+      // Dane podróży. Czytają członkowie. Dopisuje członek we własnym imieniu (pole autora = jego uid).
+      // Cudze wpisy usuwa ich autor albo założyciel podróży. Edycji wpisów aplikacja nie ma, więc jej nie ma też w regułach.
+      match /places/{id} {
+        allow read: if isMemberOf(tripId);
+        allow create: if isMemberOf(tripId) && request.resource.data.createdBy == request.auth.uid;
+        allow delete: if isMemberOf(tripId) && (resource.data.createdBy == request.auth.uid || isOwnerOf(tripId));
+      }
+      // Wspomnienie wskazuje prywatny plik w Cloudinary przez publicId (folder tej podróży) i resourceType.
+      // Nie ma w nim adresu URL: pliki czyta się przez worker, który sprawdza członkostwo. Starsze dokumenty z polem
+      // `url` (publiczne pliki sprzed migracji) można nadal czytać i usuwać, ale nie tworzyć.
+      match /memories/{id} {
+        allow read: if isMemberOf(tripId);
+        allow create: if isMemberOf(tripId) && request.resource.data.createdBy == request.auth.uid
+            && request.resource.data.publicId is string
+            && request.resource.data.publicId.matches('^wycieczka/' + tripId + '/[A-Za-z0-9_-]{8,64}$')
+            && request.resource.data.resourceType in ['image', 'video']
+            && !('url' in request.resource.data);
+        allow delete: if isMemberOf(tripId) && (resource.data.createdBy == request.auth.uid || isOwnerOf(tripId));
+      }
+      match /expenses/{id} {
+        allow read: if isMemberOf(tripId);
+        allow create: if isMemberOf(tripId) && request.resource.data.createdBy == request.auth.uid;
+        allow delete: if isMemberOf(tripId) && (resource.data.createdBy == request.auth.uid || isOwnerOf(tripId));
+      }
+      match /stays/{id} {
+        allow read: if isMemberOf(tripId);
+        allow create: if isMemberOf(tripId) && request.resource.data.createdBy == request.auth.uid;
+        allow delete: if isMemberOf(tripId) && (resource.data.createdBy == request.auth.uid || isOwnerOf(tripId));
+      }
+      // Przeloty mają pole userId (właściciel przelotu), a nie createdBy.
+      match /legs/{id} {
+        allow read: if isMemberOf(tripId);
+        allow create: if isMemberOf(tripId) && request.resource.data.userId == request.auth.uid;
+        allow delete: if isMemberOf(tripId) && (resource.data.userId == request.auth.uid || isOwnerOf(tripId));
+      }
+
+      // Lokalizacja na żywo: dokument ma id równe uid autora, czas ustawia serwer.
+      // Usunąć może autor albo założyciel (sprzątanie po kimś, kto wyszedł bez wyłączenia udostępniania).
+      match /locations/{uid} {
+        allow read: if isMemberOf(tripId);
+        allow create, update: if isMemberOf(tripId) && uid == request.auth.uid
+            && request.resource.data.updatedAt == request.time;
+        allow delete: if isMemberOf(tripId) && (uid == request.auth.uid || isOwnerOf(tripId));
+      }
+
+      // SOS: tworzy członek we własnym imieniu, czas ustawia serwer. Zamknąć alarm (active=false) może tylko autor.
+      // Alarmów nie usuwa nikt, żeby nie dało się ich ukryć.
+      match /sos/{id} {
+        allow read: if isMemberOf(tripId);
+        allow create: if isMemberOf(tripId) && request.resource.data.uid == request.auth.uid
+            && request.resource.data.active == true
+            && request.resource.data.createdAt == request.time;
+        allow update: if isMemberOf(tripId) && resource.data.uid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['active'])
+            && request.resource.data.active == false;
+        allow delete: if false;
+      }
+    }
+  }
+}

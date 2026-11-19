@@ -1,0 +1,97 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/android/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Widget Preview related
+.widget_preview/
+
+# --- CrewAtlas: private, local and generated files (never publish) ---
+# Firebase client config belongs to the owner's project: copy android/app/google-services.json.example
+android/app/google-services.json
+# Android local SDK paths and signing material
+local.properties
+key.properties
+*.jks
+*.keystore
+# Binaries: no APK in the repository or in releases
+*.apk
+*.aab
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+.dev.vars
+config.local.json
+# Local build config (see config.example.json)
+# Node
+node_modules/
+npm-debug.log*
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+# Logs, Syncthing conflicts, temporary files
+*.log
+*.sync-conflict-*
+*.tmp
+# Private working notes and raw AI-generated source images (provenance not cleared)
+cel.md
+Gemini_Generated_Image*
+Kolorowa ikona*
+# Editor files
+.vscode/
+*.iml
+
+# Legacy brand image (unused, duplicate of icon.png)
+assets/bmb_logo.png
+*.bak
+
+# Logo drafts (concepts only, not for publication until approved)
+branding-drafts/
+
+# Media migration artifacts: state and local backup of private user photos (never publish)
+migration-state.json
+migration-state.json.tmp
+migration-backup/
