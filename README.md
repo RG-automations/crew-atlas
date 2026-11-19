@@ -12,7 +12,7 @@ CrewAtlas is an Android app for groups who travel together: a shared world map w
 ![Platform: Android](https://img.shields.io/badge/platform-Android-3DDC84)
 ![Status: private prototype](https://img.shields.io/badge/status-private%20prototype-orange)
 
-> **Status: functional private prototype (0.5.1).** It is used by a small group of friends, not a production service and **not a safety system**. Source-available for study and noncommercial use, see [License](#license).
+> **Status: functional private prototype, version 0.5.1 (`pubspec.yaml`).** The features are implemented and covered by the tests listed below, but 0.5.1 itself has not yet been verified against real services (see the next note). The prototype is used by a small group of friends, not a production service and **not a safety system**. Source-available for study and noncommercial use, see [License](#license).
 >
 > **Verification status:** the latest changes (private media through the Worker, the map loaded directly from MapTiler, EXIF stripping, the new logo) are covered by unit tests, an emulator test suite for the Firestore rules and mocked integration tests only. They have **not been run on a physical device or against real Firebase, Cloudflare or Cloudinary services**. The maintainer's own installation has not been moved to this version.
 
@@ -20,7 +20,18 @@ This repository is an engineering portfolio project. The interesting parts are t
 
 ## Screenshots
 
-_Pending._ Screenshots will come from the real app running on a fictional demo trip. The plan is in [docs/demo-and-screenshots.md](docs/demo-and-screenshots.md).
+These are screenshots of the real app running on an **Android emulator**, with **fictional demo data** (a made-up "Lisbon Group Trip" with three demo users) against a **separate test Firebase project** and a MapTiler key. The invite code is masked. They show the screens that do not depend on uploaded media. Photos, thumbnails, video and voice notes are **not shown**, because the private-media path (Worker, Cloudinary) has **not yet been verified end to end**, see the verification note at the top.
+
+| | |
+|---|---|
+| ![Login screen](docs/screenshots/login.png) | ![Map with trip places and the MapTiler attribution](docs/screenshots/map.png) |
+| **Login.** E-mail and Google sign-in. | **Map.** Shared places on a MapTiler map, with the required logo and attribution links. |
+| ![Flights per traveller](docs/screenshots/plan-flights.png) | ![Accommodation](docs/screenshots/plan-stay.png) |
+| **Plan, flights.** One entry per traveller. | **Plan, accommodation.** Address, check-in and check-out. |
+| ![Expenses and settlement](docs/screenshots/expenses.png) | ![Crew and invite code](docs/screenshots/crew.png) |
+| **Expenses.** Shared costs, a PLN entry converted to EUR, and a "who owes whom" settlement. | **Crew.** Invite code (masked), live-location switch and members. |
+
+The interface language is currently Polish.
 
 ## Key features
 
@@ -183,7 +194,7 @@ Planned, not implemented:
 - Decide on stripping metadata from videos (check script ready, not run).
 - End-to-end run on a test environment (runbook and scripts ready, not run): [docs/phone-test-runbook.md](docs/phone-test-runbook.md).
 - Automatic expiry of stale live-location documents.
-- Screenshots and a demo trip.
+- Screenshots of photos, video and voice notes (after the end-to-end run above).
 
 ## License
 
