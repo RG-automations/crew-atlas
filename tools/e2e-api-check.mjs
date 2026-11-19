@@ -126,6 +126,14 @@ try {
   const sig = sg.status === 200 ? await sg.json() : {};
   record('/sign: członek dostaje podpis `authenticated` w folderze podróży', sg.status === 200 && sig.params?.type === 'authenticated' && sig.params?.public_id?.startsWith(`${folder}/`),
     `HTTP ${sg.status}, type=${sig.params?.type}`);
+  // Tryb folderów konta (E2E_FOLDER_MODE=dynamic|fixed): sprawdzamy, że worker faktycznie podpisuje to, co pasuje do konta.
+  if (e.E2E_FOLDER_MODE) {
+    if (!['fixed', 'dynamic'].includes(e.E2E_FOLDER_MODE)) throw new Error('E2E_FOLDER_MODE: fixed albo dynamic.');
+    const dyn = e.E2E_FOLDER_MODE === 'dynamic';
+    record(`/sign: tryb folderów ${e.E2E_FOLDER_MODE}: ${dyn ? 'asset_folder = folder podróży i prefiks public_id' : 'bez asset_folder'}`,
+      sg.status === 200 && (dyn ? sig.params?.asset_folder === folder && sig.params?.public_id?.startsWith(`${folder}/`) : sig.params?.asset_folder === undefined),
+      `HTTP ${sg.status}, asset_folder ${sig.params?.asset_folder === undefined ? 'brak' : 'jest'}`);
+  }
   expectStatus('/sign: obcy dostaje odmowę', (await worker(stranger, 'POST', '/sign', { folder, v: 2 })).status, [403]);
   expectStatus('/sign: bez tokenu', (await worker(null, 'POST', '/sign', { folder, v: 2 })).status, [401]);
   expectStatus('/sign: stary format jest odrzucony', (await worker(member, 'POST', '/sign', { folder })).status, [426]);

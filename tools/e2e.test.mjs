@@ -20,6 +20,7 @@ if (process.argv[2] === 'child') {
   src = src.replace('export default {', 'const worker = {') + '\nexport { worker };';
   const { worker } = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
   const wenv = { ...(brk.includes('no-cloudinary') ? {} : { CLOUDINARY_CLOUD: 'demo-cloud', CLOUDINARY_API_KEY: APIKEY_CLD, CLOUDINARY_API_SECRET: SECRET }), FIREBASE_PROJECT_ID: 'proj',
+    ...(process.env.WORKER_FOLDER_MODE !== undefined ? { CLOUDINARY_FOLDER_MODE: process.env.WORKER_FOLDER_MODE } : {}),
     ...(brk.includes('no-media-secret') ? {} : { MEDIA_TOKEN_SECRET: 'media-secret-VALUE' }) };
   const { publicKey, privateKey } = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
   const jwk = { ...(await crypto.subtle.exportKey('jwk', publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
@@ -178,6 +179,17 @@ if (process.argv[2] === 'child') {
     assert.equal(r.code, 2, label);
     assert.equal(r.world.calls, 0, `${label}: zero żądań`);
   }
+  // tryb folderów: zgodność worker/konto jest sprawdzana, niezgodność to FAIL (nie ciche przejście)
+  for (const [want, have, pass] of [['dynamic', 'dynamic', true], ['fixed', 'fixed', true], ['fixed', undefined, true], ['dynamic', 'fixed', false], ['dynamic', undefined, false], ['fixed', 'dynamic', false]]) {
+    r = run('api', API, { E2E_FOLDER_MODE: want, ...(have !== undefined ? { WORKER_FOLDER_MODE: have } : {}) });
+    assert.equal(r.code, pass ? 0 : 1, `konto ${want}, worker ${have}: ${r.out.slice(-300)}`);
+    assert.ok(/FAIL.*tryb folderów/.test(r.out) === !pass, `konto ${want}, worker ${have}`);
+    noLeak(r.out);
+  }
+  r = run('api', API, { E2E_FOLDER_MODE: 'dynamic', WORKER_FOLDER_MODE: 'zle' });
+  assert.notEqual(r.code, 0, 'zła wartość w workerze nie przechodzi'); noLeak(r.out);
+  r = run('api', API, { E2E_FOLDER_MODE: 'Dynamic' });
+  assert.notEqual(r.code, 0, 'zła wartość E2E_FOLDER_MODE nie przechodzi');
   r = run('api', API, { E2E_MEMBER_PASSWORD: '' });
   assert.equal(r.code, 2);
 
