@@ -31,6 +31,10 @@ if (process.argv[2] === 'child') {
   const users = { 'member@test.invalid': ['u-member', PW], 'stranger@test.invalid': ['u-stranger', PW], 'member2@test.invalid': ['u-member2', PW] };
   const db = { trips: { [TRIP]: { memberIds: ['u-member', 'u-member2'], createdBy: 'u-member' } }, memories: {} };
   const assets = {};
+  const fxb = (f) => fs.readFileSync(new URL(`../worker/fixtures/${f}`, import.meta.url));
+  const seed = (n, res, fmt, type, file) => { assets[`authenticated/${res}/wycieczka/${TRIP}/seedmedia${n}`] = fxb(file); db.memories[`${TRIP}/m${n}`] = { publicId: `wycieczka/${TRIP}/seedmedia${n}`, resourceType: res, format: fmt, type, createdBy: 'u-member' }; };
+  if (process.env.SEED === 'dirty') { seed(1, 'image', 'jpg', 'photo', 'synthetic-gps.jpg'); seed(2, 'video', 'mp4', 'video', 'synthetic-gps.mp4'); }
+  if (process.env.SEED === 'clean') { seed(1, 'image', 'jpg', 'photo', 'synthetic-orientation-only.jpg'); }
   const log = process.stderr;
   const st = (v) => ({ stringValue: v });
   const sig1 = (p) => `s--${createHash('sha1').update(p + SECRET).digest('base64url').slice(0, 8)}--`;
@@ -39,6 +43,11 @@ if (process.argv[2] === 'child') {
   async function firestore(u, init) {
     const method = init.method ?? 'GET';
     const caller = uidOf(init.headers);
+    const lm = /documents\/trips\/([^/?]+)\/memories\?pageSize=/.exec(u);
+    if (lm) {
+      if (!db.trips[lm[1]]?.memberIds.includes(caller)) return new Response('{}', { status: 403 });
+      return Response.json({ documents: Object.entries(db.memories).filter(([k]) => k.startsWith(`${lm[1]}/`)).map(([, mem]) => ({ fields: Object.fromEntries(Object.entries(mem).map(([k, v]) => [k, st(v)])) })) });
+    }
     const m = /documents\/trips\/([^/?]+)(?:\/memories\/([^/?]+))?(?:\?(.*))?$/.exec(u) ?? /documents\/trips\/([^/?]+)\/memories\?documentId=(.+)$/.exec(u);
     const tripId = m[1];
     const trip = db.trips[tripId];
@@ -100,12 +109,19 @@ if (process.argv[2] === 'child') {
     if (!data) return new Response('', { status: 404 });
     const r = init.headers?.range && /^bytes=(\d*)-(\d*)$/.exec(init.headers.range);
     if (r) {
-      const a = Number(r[1]), b = r[2] ? Number(r[2]) : data.length - 1, sl = data.subarray(a, b + 1);
+      const suffix = r[1] === '' ? Number(r[2]) : 0;
+      const a = suffix ? Math.max(0, data.length - suffix) : Number(r[1]), b = suffix || !r[2] ? data.length - 1 : Number(r[2]), sl = data.subarray(a, b + 1);
       return new Response(sl, { status: 206, headers: { 'content-type': 'image/png', 'content-range': `bytes ${a}-${b}/${data.length}`, 'content-length': String(sl.length) } });
     }
     return new Response(data, { status: 200, headers: { 'content-type': 'image/png', 'content-length': String(data.length) } });
   }
 
+  if (process.env.FAKE_CLOCK) { // czekanie na wygaśnięcie tokenu bez realnego czekania: zegar skacze
+    let skew = 0;
+    const realNow = Date.now, realTimeout = globalThis.setTimeout;
+    Date.now = () => realNow() + skew;
+    globalThis.setTimeout = (fn, ms, ...a) => (ms > 1000 ? (skew += ms, realTimeout(fn, 0, ...a)) : realTimeout(fn, ms, ...a));
+  }
   let calls = 0;
   globalThis.fetch = async (url, init = {}) => {
     const u = String(url);
@@ -132,7 +148,7 @@ if (process.argv[2] === 'child') {
   };
   process.on('exit', () => log.write('WORLD ' + JSON.stringify({ calls, memories: Object.keys(db.memories), assets: Object.keys(assets), members: db.trips[TRIP].memberIds }) + '\n'));
   process.argv.splice(2, 4, ...process.argv.slice(6));
-  await import(script === 'preflight' ? fileURLToPath(new URL('./e2e-preflight.mjs', import.meta.url)) : fileURLToPath(new URL('./e2e-api-check.mjs', import.meta.url)));
+  await import(fileURLToPath(new URL(script === 'preflight' ? './e2e-preflight.mjs' : script === 'inspect' ? './e2e-inspect-media.mjs' : './e2e-api-check.mjs', import.meta.url)));
 } else {
   const run = (script, args = [], env = {}, brk = '') => {
     const r = spawnSync(process.execPath, [here, 'child', 'x', script, 'x', ...args], {
@@ -227,6 +243,41 @@ if (process.argv[2] === 'child') {
   assert.equal(r.code, 1);
   if (prevReq === undefined) delete process.env.TEST_REQUIRE_ANDROID; else process.env.TEST_REQUIRE_ANDROID = prevReq;
 
+  // ---- rodzaje plików i wygaśnięcie tokenu ----
+  for (const kind of ['video', 'audio']) {
+    r = run('api', [...API, `--media=${kind}`]);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /RESULT: PASS/);
+    assert.match(r.out, /zakres ze środka pliku \(przewijanie\)/);
+    assert.match(r.out, /zakres od końca/);
+    assert.equal(/worker: miniatura/.test(r.out), kind === 'video', `miniatura tylko dla wideo (${kind})`);
+    assert.deepEqual([r.world.memories, r.world.assets], [[], []], `${kind}: po teście nic nie zostaje`);
+    noLeak(r.out);
+  }
+  assert.equal(run('api', [...API, '--media=gif']).code, 2);
+  r = run('api', [...API, '--expiry-test'], { FAKE_CLOCK: '1' });
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /PASS  wygaśnięcie: po końcu ważności stary token jest odrzucony/);
+  assert.match(r.out, /PASS  wygaśnięcie: nowy token działa/);
+  assert.deepEqual([r.world.memories, r.world.assets], [[], []]);
+  r = run('api', ['--expiry-test']);
+  assert.match(r.out, /wygaśnięcie tokenu mediów/, 'plan na sucho wymienia test wygaśnięcia');
+
+  // ---- e2e-inspect-media ----
+  r = run('inspect', API, { SEED: 'clean' });
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /PASS  photo #1/);
+  r = run('inspect', API, { SEED: 'dirty' });
+  assert.equal(r.code, 1, 'zdjęcie z GPS ma dać FAIL'); assert.match(r.out, /FAIL  photo #1.*GPSIFD|FAIL  photo #1.*Make/);
+  assert.match(r.out, /FINDING  video #2/); noLeak(r.out);
+  r = run('inspect', [...API, '--require-video-clean'], { SEED: 'dirty' });
+  assert.match(r.out, /FAIL  video #2/);
+  r = run('inspect', API);
+  assert.equal(r.code, 1, 'brak plików to nie sukces');
+  r = run('inspect', API, { PROD_FIREBASE_PROJECT_ID: 'proj', SEED: 'clean' });
+  assert.equal(r.code, 2); assert.equal(r.world.calls, 0);
+  r = run('inspect', []);
+  assert.equal(r.code, 0); assert.equal(r.world.calls, 0, 'bez zgody nic nie wychodzi');
+
   // ---- e2e-preflight ----
   const pre = (env = {}, brk = '') => run('preflight', [], { MAPTILER_KEY: '', ...env }, brk);
   r = pre();
@@ -244,7 +295,7 @@ if (process.argv[2] === 'child') {
   noLeak(pre().out);
 
   // pliki skryptów nie zapisują na dysk i nie zawierają zaszytych adresów ani kluczy
-  for (const f of ['e2e-api-check.mjs', 'e2e-preflight.mjs']) {
+  for (const f of ['e2e-api-check.mjs', 'e2e-preflight.mjs', 'e2e-inspect-media.mjs']) {
     const t = fs.readFileSync(dir + f, 'utf8');
     assert.ok(!/writeFile|appendFile|createWriteStream/.test(t), `${f} nie zapisuje na dysk`);
     assert.ok(!new RegExp('AI' + 'za[0-9A-Za-z_-]{20}|workers' + '\\.dev').test(t), `${f} bez zaszytych kluczy i adresów`);

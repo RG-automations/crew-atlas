@@ -1,9 +1,13 @@
 // Test end-to-end po stronie backendu na ŚRODOWISKU TESTOWYM: konta demo wykonują scenariusze prywatnych mediów
 // przez prawdziwy Firebase Auth, Firestore (reguły!), testowy Worker i Cloudinary. Telefon zostaje do interfejsu.
 //
+// Rodzaj pliku: --media=photo (domyślnie), --media=video lub --media=audio (syntetyczne pliki z worker/fixtures, głosówka to m4a).
+// --expiry-test: czeka do końca ważności tokenu mediów i sprawdza, że stary token jest odrzucony, a nowy działa
+// (przy MEDIA_TOKEN_TTL=120 trwa ok. 2 minut). Dla --media=video i audio sprawdza też zakres ze środka pliku (przewijanie).
+//
 // Domyślnie to próba na sucho (tylko wypisuje plan). Zapisuje cokolwiek dopiero z --i-am-using-test-services.
 //
-//   node tools/e2e-api-check.mjs [--i-am-using-test-services] [--leave-test] [--measure-window]
+//   node tools/e2e-api-check.mjs [--i-am-using-test-services] [--media=photo|video|audio] [--leave-test] [--measure-window] [--expiry-test]
 //
 // Środowisko (hasła i klucze wpisuj przez `read -rs`, nigdy w argumentach polecenia):
 //   WORKER_URL, FIREBASE_API_KEY, FIREBASE_PROJECT_ID  (testowe)
@@ -18,11 +22,23 @@
 //
 // Tworzy jeden syntetyczny obraz PNG i jedno wspomnienie. Po sobie sprząta: usuwa plik przez Worker i dokument przez
 // Firestore, zawsze, także po błędzie. Wypisuje tylko statusy, bez tokenów, haseł i adresów.
+import fs from 'node:fs';
 import { png } from './lib/png.mjs';
 
 const args = process.argv.slice(2);
 const flag = (n) => args.includes(`--${n}`);
 const e = process.env;
+const MEDIA = (args.find((a) => a.startsWith('--media=')) ?? '--media=photo').slice(8);
+const fixture = (f) => fs.readFileSync(new URL(`../worker/fixtures/${f}`, import.meta.url));
+const PAY = {
+  photo: { resource: 'image', format: 'png', mime: 'image/png', bytes: () => png(7) },
+  video: { resource: 'video', format: 'mp4', mime: 'video/mp4', bytes: () => fixture('synthetic-gps.mp4') },
+  audio: { resource: 'video', format: 'm4a', mime: 'audio/mp4', bytes: () => fixture('synthetic-voice.m4a') },
+}[MEDIA];
+if (!PAY) {
+  console.error('--media musi mieć wartość photo, video albo audio.');
+  process.exit(2);
+}
 const need = ['WORKER_URL', 'FIREBASE_API_KEY', 'FIREBASE_PROJECT_ID', 'E2E_TRIP_ID', 'E2E_MEMBER_EMAIL', 'E2E_MEMBER_PASSWORD', 'E2E_STRANGER_EMAIL', 'E2E_STRANGER_PASSWORD'];
 const missing = need.filter((k) => !e[k]);
 if (missing.length) {
@@ -43,8 +59,9 @@ if (!/^[A-Za-z0-9]{1,64}$/.test(e.E2E_TRIP_ID)) {
 }
 const WORKER = e.WORKER_URL.replace(/\/$/, '');
 const TRIP = e.E2E_TRIP_ID;
-const STEPS = ['logowanie kont', '/sign: członek, obcy, bez tokenu, stary format', 'wysłanie syntetycznego PNG jako authenticated', 'adres Cloudinary bez podpisu i publiczny typ',
+const STEPS = ['logowanie kont', '/sign: członek, obcy, bez tokenu, stary format', `wysłanie syntetycznego pliku (${MEDIA}) jako authenticated`, 'adres Cloudinary bez podpisu i publiczny typ',
   'reguły Firestore: obcy, zły folder, poprawny wpis', 'token mediów: członek, obcy', 'odczyt przez worker: plik, miniatura, Range, bez tokenu, token w adresie, nagłówki',
+  ...(flag('expiry-test') ? ['wygaśnięcie tokenu mediów: stary odrzucony, nowy działa'] : []),
   'usuwanie: obcy, autor, ponowne, wpis', ...(flag('leave-test') ? ['opuszczenie grupy: nowy token odmówiony, okno starego tokenu'] : [])];
 if (!flag('i-am-using-test-services')) {
   console.log('Próba na sucho. Scenariusz:');
@@ -86,8 +103,8 @@ const fsReq = (user, method, p, body) => http(`${fsBase}/${p}`, { method, header
 const worker = (user, method, p, body, headers = {}) => http(`${WORKER}${p}`, {
   method, headers: { ...(user ? { authorization: `Bearer ${user.token}` } : {}), ...(body ? { 'content-type': 'application/json' } : {}), ...headers }, body: body && JSON.stringify(body),
 });
-const memDoc = (uid, publicId) => ({ fields: { placeId: { stringValue: 'e2e' }, type: { stringValue: 'photo' }, publicId: { stringValue: publicId }, resourceType: { stringValue: 'image' },
-  format: { stringValue: 'png' }, description: { stringValue: 'E2E synthetic' }, createdBy: { stringValue: uid } } });
+const memDoc = (uid, publicId) => ({ fields: { placeId: { stringValue: 'e2e' }, type: { stringValue: MEDIA }, publicId: { stringValue: publicId }, resourceType: { stringValue: PAY.resource },
+  format: { stringValue: PAY.format }, description: { stringValue: 'E2E synthetic' }, createdBy: { stringValue: uid } } });
 
 let member, stranger, member2;
 let publicId = null, docId = null, docCreated = false, assetDeleted = false;
@@ -105,7 +122,7 @@ try {
 
   // 2
   const folder = `wycieczka/${TRIP}`;
-  const sg = await worker(member, 'POST', '/sign', { folder, v: 2, kind: 'photo' });
+  const sg = await worker(member, 'POST', '/sign', { folder, v: 2, kind: MEDIA });
   const sig = sg.status === 200 ? await sg.json() : {};
   record('/sign: członek dostaje podpis `authenticated` w folderze podróży', sg.status === 200 && sig.params?.type === 'authenticated' && sig.params?.public_id?.startsWith(`${folder}/`),
     `HTTP ${sg.status}, type=${sig.params?.type}`);
@@ -115,24 +132,24 @@ try {
   if (sg.status !== 200) throw new Error('bez podpisu nie da się iść dalej');
 
   // 3
-  const bytes = png(7);
+  const bytes = PAY.bytes();
   const form = new FormData();
   form.set('api_key', sig.apiKey);
   form.set('signature', sig.signature);
   for (const [k, v] of Object.entries(sig.params)) form.set(k, v);
-  form.set('file', new Blob([bytes], { type: 'image/png' }), 'e2e.png');
-  const up = await http(`https://api.cloudinary.com/v1_1/${sig.cloud}/image/upload`, { method: 'POST', body: form }, 120_000);
+  form.set('file', new Blob([bytes], { type: PAY.mime }), `e2e.${PAY.format}`);
+  const up = await http(`https://api.cloudinary.com/v1_1/${sig.cloud}/${PAY.resource}/upload`, { method: 'POST', body: form }, 120_000);
   const ub = await up.json().catch(() => ({}));
   publicId = ub.public_id ?? null;
-  record('wysłanie PNG: Cloudinary potwierdza `authenticated` i podpisany public_id', up.status === 200 && ub.type === 'authenticated' && ub.public_id === sig.params.public_id,
+  record(`wysłanie pliku (${MEDIA}): Cloudinary potwierdza typ authenticated i podpisany public_id`, up.status === 200 && ub.type === 'authenticated' && ub.public_id === sig.params.public_id,
     `HTTP ${up.status}, type=${ub.type}${ub.error ? `, ${redact(ub.error.message)}` : ''}`);
   if (up.status !== 200 || ub.public_id !== sig.params.public_id) throw new Error('upload nie powiódł się');
   const fileId = publicId.split('/').pop();
 
   // 4
-  const base = `https://res.cloudinary.com/${sig.cloud}/image`;
-  expectStatus('Cloudinary: adres typu authenticated bez podpisu', (await http(`${base}/authenticated/${publicId}.png`, { redirect: 'manual' })).status, [401, 403, 404]);
-  expectStatus('Cloudinary: ten sam plik jako publiczny `upload`', (await http(`${base}/upload/${publicId}.png`, { redirect: 'manual' })).status, [401, 403, 404]);
+  const base = `https://res.cloudinary.com/${sig.cloud}/${PAY.resource}`;
+  expectStatus('Cloudinary: adres typu authenticated bez podpisu', (await http(`${base}/authenticated/${publicId}.${PAY.format}`, { redirect: 'manual' })).status, [401, 403, 404]);
+  expectStatus('Cloudinary: ten sam plik jako publiczny `upload`', (await http(`${base}/upload/${publicId}.${PAY.format}`, { redirect: 'manual' })).status, [401, 403, 404]);
 
   // 5 (reguły Firestore na prawdziwej bazie)
   docId = `e2e${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
@@ -156,21 +173,45 @@ try {
   expectStatus('token mediów: obcy', (await worker(stranger, 'POST', '/media/token', { tripId: TRIP })).status, [403]);
 
   // 7
-  const path = `/media/image/${TRIP}/${fileId}.png`;
-  const auth = { authorization: `Bearer ${tok.token}` };
+  const path = `/media/${PAY.resource}/${TRIP}/${fileId}.${PAY.format}`;
+  let auth = { authorization: `Bearer ${tok.token}` };
   const full = await http(`${WORKER}${path}`, { headers: auth });
   const buf = Buffer.from(await full.arrayBuffer());
   record('worker: członek czyta plik, bajty zgodne z wysłanymi', full.status === 200 && buf.equals(bytes), `HTTP ${full.status}, ${buf.length} B`);
   record('worker: nagłówki prywatne, bez Location i adresu Cloudinary', full.headers.get('cache-control') === 'private, no-store' && !full.headers.has('location')
     && !JSON.stringify([...full.headers.entries()]).includes('cloudinary'), `cache-control=${full.headers.get('cache-control')}`);
-  expectStatus('worker: miniatura', (await http(`${WORKER}${path}?thumb=1`, { headers: auth })).status, [200]);
+  if (MEDIA !== 'audio') expectStatus('worker: miniatura', (await http(`${WORKER}${path}?thumb=1`, { headers: auth })).status, [200]);
   const rg = await http(`${WORKER}${path}`, { headers: { ...auth, range: 'bytes=0-9' } });
   const rb = Buffer.from(await rg.arrayBuffer());
   record('worker: Range zwraca 206 i dokładnie 10 bajtów', rg.status === 206 && rb.length === 10 && rb.equals(bytes.subarray(0, 10)), `HTTP ${rg.status}, ${rb.length} B, ${rg.headers.get('content-range')}`);
+  if (MEDIA !== 'photo') {
+    // przewijanie: odtwarzacz prosi o zakres ze środka pliku
+    const a = Math.floor(bytes.length / 3), b = a + 99;
+    const mid = await http(`${WORKER}${path}`, { headers: { ...auth, range: `bytes=${a}-${b}` } });
+    const mb = Buffer.from(await mid.arrayBuffer());
+    record('worker: zakres ze środka pliku (przewijanie) zwraca 206 i właściwe bajty', mid.status === 206 && mb.equals(bytes.subarray(a, b + 1)), `HTTP ${mid.status}, ${mb.length} B, ${mid.headers.get('content-range')}`);
+    const tail = await http(`${WORKER}${path}`, { headers: { ...auth, range: 'bytes=-50' } });
+    const tb = Buffer.from(await tail.arrayBuffer());
+    record('worker: zakres od końca (moov na końcu pliku) zwraca 206 i ostatnie bajty', tail.status === 206 && tb.equals(bytes.subarray(bytes.length - 50)), `HTTP ${tail.status}, ${tb.length} B`);
+  }
   expectStatus('worker: bez tokenu', (await http(`${WORKER}${path}`)).status, [401]);
   expectStatus('worker: token w adresie nie działa', (await http(`${WORKER}${path}?t=${encodeURIComponent(tok.token)}`)).status, [401]);
-  expectStatus('worker: ścieżka innej podróży z tym tokenem', (await http(`${WORKER}/media/image/${TRIP}X/${fileId}.png`, { headers: auth })).status, [403, 404]);
-  expectStatus('worker: podstawiony identyfikator', (await http(`${WORKER}/media/image/${TRIP}/..%2F${fileId}.png`, { headers: auth })).status, [400, 404]);
+  expectStatus('worker: ścieżka innej podróży z tym tokenem', (await http(`${WORKER}/media/${PAY.resource}/${TRIP}X/${fileId}.${PAY.format}`, { headers: auth })).status, [403, 404]);
+  expectStatus('worker: podstawiony identyfikator', (await http(`${WORKER}/media/${PAY.resource}/${TRIP}/..%2F${fileId}.${PAY.format}`, { headers: auth })).status, [400, 404]);
+
+  // wygaśnięcie tokenu
+  if (flag('expiry-test')) {
+    const t1 = await (await worker(member, 'POST', '/media/token', { tripId: TRIP })).json().catch(() => ({}));
+    const a1 = { authorization: `Bearer ${t1.token}` };
+    expectStatus('wygaśnięcie: świeży token działa', (await http(`${WORKER}${path}`, { headers: a1 })).status, [200]);
+    const waitMs = Math.max(0, t1.expiresAt * 1000 - Date.now()) + 3000;
+    console.log(`INFO  czekam ${Math.round(waitMs / 1000)} s na wygaśnięcie tokenu`);
+    await new Promise((r) => setTimeout(r, waitMs));
+    expectStatus('wygaśnięcie: po końcu ważności stary token jest odrzucony', (await http(`${WORKER}${path}`, { headers: a1 })).status, [401]);
+    const t2 = await (await worker(member, 'POST', '/media/token', { tripId: TRIP })).json().catch(() => ({}));
+    auth = { authorization: `Bearer ${t2.token}` }; // dalsze kroki używają nowego tokenu
+    expectStatus('wygaśnięcie: nowy token działa', (await http(`${WORKER}${path}`, { headers: auth })).status, [200]);
+  }
 
   // opuszczenie grupy
   if (member2) {

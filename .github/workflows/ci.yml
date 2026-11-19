@@ -48,6 +48,8 @@ jobs:
       - run: node worker/cloudinary-video-strip-check.test.mjs
       - run: node tools/migrate-media-to-private.test.mjs
       - run: node tools/e2e.test.mjs
+      - run: node tools/inspect-media.test.mjs
+      - run: node tools/e2e-cleanup-cloudinary.test.mjs
       - run: node worker/cloudinary-privacy-check.test.mjs
 
   firestore-rules:
