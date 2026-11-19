@@ -130,6 +130,38 @@ assert.equal((await sgn({ kind: 'video', transformation: 'e_blur:2000' }, envStr
   assert.equal(cr.signature, sha1(`allowed_formats=${pp.allowed_formats}&overwrite=false&public_id=${pp.public_id}&timestamp=${pp.timestamp}&transformation=fl_force_strip&type=authenticated` + 'sekret'), 'transformacja jest w podpisie');
 }
 
+// CLOUDINARY_FOLDER_MODE=dynamic: podpis obejmuje asset_folder wyznaczony z id podróży; fixed (domyślnie) bez zmian
+{
+  const envDyn = { ...env, CLOUDINARY_FOLDER_MODE: 'dynamic' };
+  const d = await (await sign({ folder: 'wycieczka/T-OK', v: 2 }, auth, envDyn)).json();
+  assert.equal(d.params.asset_folder, 'wycieczka/T-OK');
+  assert.ok(d.params.public_id.startsWith(d.params.asset_folder + '/'), 'public_id zachowuje format wycieczka/<trip>/<uuid>');
+  assert.deepEqual(Object.keys(d.params).sort(), ['allowed_formats', 'asset_folder', 'overwrite', 'public_id', 'timestamp', 'type']);
+  const q = d.params;
+  assert.equal(d.signature, sha1(`allowed_formats=${q.allowed_formats}&asset_folder=${q.asset_folder}&overwrite=false&public_id=${q.public_id}&timestamp=${q.timestamp}&type=authenticated` + 'sekret'), 'asset_folder jest w podpisie');
+  // klient nie ustala asset_folder (ani nie wychodzi nim poza swoją podróż)
+  const f = await (await sign({ folder: 'wycieczka/T-OK', v: 2, asset_folder: 'wycieczka/INNA', folder_override: 'x' }, auth, envDyn)).json();
+  assert.equal(f.params.asset_folder, 'wycieczka/T-OK');
+  // tryb fixed i dowolna inna wartość zmiennej: brak asset_folder
+  for (const mode of [undefined, 'fixed']) {
+    const r = await (await sign({ folder: 'wycieczka/T-OK', v: 2, asset_folder: 'wycieczka/INNA' }, auth, { ...env, CLOUDINARY_FOLDER_MODE: mode })).json();
+    assert.equal(r.params.asset_folder, undefined, `tryb ${mode}: bez asset_folder`);
+  }
+  // błędna wartość to błąd konfiguracji (500), bez podpisu i bez ciszy: nigdy nie zgadujemy trybu
+  for (const bad of ['', 'Dynamic', 'DYNAMIC', ' dynamic', 'dynamic ', 'dyn', 'true', '1', 'fixed,dynamic']) {
+    const r = await sign({ folder: 'wycieczka/T-OK', v: 2 }, auth, { ...env, CLOUDINARY_FOLDER_MODE: bad });
+    const text = await r.text();
+    assert.equal(r.status, 500, `wartość ${JSON.stringify(bad)} musi dać błąd`);
+    assert.ok(!text.includes('signature') && !text.includes('params') && !text.includes('sekret') && !text.includes(bad || '\u0000'), 'bez podpisu i bez ujawniania wartości');
+  }
+  // błędna wartość nie zmienia kolejności kontroli: obcy nadal dostaje 403, bez tokenu 401
+  assert.equal((await sign({ folder: 'wycieczka/T-INNA', v: 2 }, auth, { ...env, CLOUDINARY_FOLDER_MODE: 'zle' })).status, 403);
+  // z VIDEO_STRIP oba parametry są w podpisie
+  const v = await (await sign({ folder: 'wycieczka/T-OK', v: 2, kind: 'video' }, auth, { ...envDyn, VIDEO_STRIP: '1' })).json();
+  const w = v.params;
+  assert.equal(v.signature, sha1(`allowed_formats=${w.allowed_formats}&asset_folder=${w.asset_folder}&overwrite=false&public_id=${w.public_id}&timestamp=${w.timestamp}&transformation=fl_force_strip&type=authenticated` + 'sekret'));
+}
+
 // zły token / zła grupa odbiorców: 401 i komunikat nie zdradza konfiguracji workera
 for (const over of [{ aud: 'inny' }, { exp: 1 }, { iss: 'https://evil.example/proj' }]) {
   const r = await sign({ folder: 'wycieczka/T-OK', v: 2 }, { authorization: 'Bearer ' + await makeJwt(over), 'content-type': 'application/json' });

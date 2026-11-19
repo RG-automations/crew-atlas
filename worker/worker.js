@@ -19,6 +19,7 @@
 //
 // Zmienne (Settings -> Variables and Secrets):
 //   ALLOWED_UIDS (opcjonalnie: uid kont po przecinku; tylko one dostają podpisy i tokeny mediów),
+//   CLOUDINARY_FOLDER_MODE (opcjonalnie: `dynamic` gdy konto ma dynamic folders (podpis obejmuje asset_folder), `fixed` albo brak = dotychczas; inna wartość = błąd 500),
 //   VIDEO_STRIP (opcjonalnie, 1: filmy wysyłane z incoming `fl_force_strip`; włącz dopiero po teście na koncie),
 //   CLOUDINARY_CLOUD, CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET (Secret), FIREBASE_PROJECT_ID,
 //   MEDIA_TOKEN_SECRET (Secret, długi losowy tekst), opcjonalnie MEDIA_TOKEN_TTL (sekundy, domyślnie 600, 60-3600).
@@ -180,6 +181,12 @@ async function handleSign(request, env) {
   }
   if (!member) return json({ error: 'forbidden' }, 403);
   if (!cloudinaryReady(env)) return json({ error: 'not configured' }, 500);
+  // Tryb folderów: brak zmiennej = dotychczasowe zachowanie (fixed). Każda inna wartość niż `fixed`/`dynamic` to błąd
+  // konfiguracji, a nie ciche założenie trybu: plik trafiłby do roota albo poza folder klucza.
+  if (env.CLOUDINARY_FOLDER_MODE !== undefined && !['fixed', 'dynamic'].includes(env.CLOUDINARY_FOLDER_MODE)) {
+    console.error('CLOUDINARY_FOLDER_MODE: nieprawidłowa wartość (dozwolone: fixed, dynamic)');
+    return json({ error: 'not configured' }, 500);
+  }
 
   // Jeden podpis = jeden plik (public_id losuje worker, overwrite=false), tylko dozwolone formaty i
   // zawsze `type=authenticated`. Wszystkie parametry pochodzą z workera, klient nie dokłada żadnego.
@@ -194,6 +201,10 @@ async function handleSign(request, env) {
   // (GPS itd.) z zapisywanego oryginału. Wymaga potwierdzenia na koncie testem `cloudinary-video-strip-check.mjs`.
   // Decyduje worker na podstawie rodzaju pliku z żądania, klient nie wpływa na samą transformację.
   if (env.VIDEO_STRIP === '1' && body.kind === 'video') params.transformation = 'fl_force_strip';
+  // Konto w trybie dynamic folders: folder nie wynika z public_id, więc podpisujemy też `asset_folder`.
+  // Wartość pochodzi tylko z zwalidowanego id podróży (m[0]), klient jej nie podaje. W trybie fixed
+  // Cloudinary nie przyjmuje tego parametru, dlatego (fixed lub zmienna nieustawiona) go nie dodajemy.
+  if (env.CLOUDINARY_FOLDER_MODE === 'dynamic') params.asset_folder = m[0];
   const toSign = Object.keys(params).sort().map((k) => `${k}=${params[k]}`).join('&');
   const signature = await sha1Hex(toSign + env.CLOUDINARY_API_SECRET);
   return json({ cloud: env.CLOUDINARY_CLOUD, apiKey: env.CLOUDINARY_API_KEY, signature, params });
