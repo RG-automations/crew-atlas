@@ -336,6 +336,24 @@ firestoreDown = false;
   // token wydany wcześniej działa do końca ważności (jak w przypadku opuszczenia grupy)
 }
 
+// ================= bez konfiguracji Cloudinary (np. worker testowy przed podłączeniem konta) =================
+{
+  const noCld = { ...env, CLOUDINARY_CLOUD: '', CLOUDINARY_API_KEY: '', CLOUDINARY_API_SECRET: '' };
+  const j = { 'content-type': 'application/json' };
+  const before = cld.destroys.length;
+  const sg = async (u, e) => call('/sign', { method: 'POST', headers: { ...bearer(await jwt(u)), ...j }, body: '{"folder":"wycieczka/T1","v":2}' }, e);
+  assert.equal((await sg('alice', noCld)).status, 500, '/sign bez Cloudinary: 500, nie podpis z pustym sekretem');
+  assert.equal((await sg('stranger', noCld)).status, 403, 'autoryzacja jest sprawdzana przed konfiguracją');
+  const tok = (await mediaToken('alice')).token;
+  const file = await call('/media/image/T1/abcdefgh12.png', { headers: { authorization: `Bearer ${tok}` } }, noCld);
+  assert.equal(file.status, 500, 'ważny token, ale brak Cloudinary: 500');
+  assert.equal((await call('/media/image/T1/abcdefgh12.png', {}, noCld)).status, 401, 'bez tokenu nadal 401');
+  assert.equal((await call('/media/image/OTHER/abcdefgh12.png', { headers: { authorization: `Bearer ${tok}` } }, noCld)).status, 403, 'cudza podróż nadal 403');
+  assert.equal((await call('/media/memory/T1/memBob1', { method: 'DELETE', headers: bearer(await jwt('owner')) }, noCld)).status, 500);
+  assert.equal(cld.destroys.length, before, 'bez konfiguracji nic nie jest usuwane');
+  await noLeak(file, 'brak konfiguracji');
+}
+
 // ================= logi =================
 for (const line of logged) for (const bad of ['res.cloudinary.com', 's--', SECRET, MEDIA_SECRET]) assert.ok(!line.includes(bad), 'wyciek w logach');
 assert.equal(logged.length, 0, 'worker niczego nie loguje');

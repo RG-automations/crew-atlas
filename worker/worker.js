@@ -149,6 +149,8 @@ async function readDoc(env, idToken, path, fieldPaths) {
   if (res.status !== 200) return null;
   return res.json();
 }
+// Bez konfiguracji Cloudinary worker nie podpisuje i nie pobiera niczego (a nie podpisuje z pustym sekretem). Sprawdzane po autoryzacji.
+const cloudinaryReady = (env) => !!(env.CLOUDINARY_CLOUD && env.CLOUDINARY_API_KEY && env.CLOUDINARY_API_SECRET);
 const field = (doc, name) => doc?.fields?.[name]?.stringValue;
 
 async function isTripMember(env, idToken, uid, tripId) {
@@ -177,6 +179,7 @@ async function handleSign(request, env) {
     return json({ error: 'upstream' }, 502);
   }
   if (!member) return json({ error: 'forbidden' }, 403);
+  if (!cloudinaryReady(env)) return json({ error: 'not configured' }, 500);
 
   // Jeden podpis = jeden plik (public_id losuje worker, overwrite=false), tylko dozwolone formaty i
   // zawsze `type=authenticated`. Wszystkie parametry pochodzą z workera, klient nie dokłada żadnego.
@@ -266,6 +269,7 @@ async function handleMedia(request, env, url) {
   if (verdict === 'denied') return mediaError(401, 'unauthorized');
   if (verdict === 'other-trip') return mediaError(403, 'forbidden');
 
+  if (!cloudinaryReady(env)) return mediaError(500, 'not configured');
   let transform = '';
   let outFormat = format;
   if (url.searchParams.get('thumb') === '1') {
@@ -330,6 +334,7 @@ async function handleMediaDelete(request, env, url) {
   const uid = auth.user.sub;
   if (uid !== field(memory, 'createdBy') && uid !== field(trip, 'createdBy')) return json({ error: 'forbidden' }, 403);
 
+  if (!cloudinaryReady(env)) return json({ error: 'not configured' }, 500);
   const publicId = field(memory, 'publicId');
   const resource = field(memory, 'resourceType');
   if (!publicId || !Object.hasOwn(FORMATS, resource)) return json({ error: 'not a private media entry' }, 400);

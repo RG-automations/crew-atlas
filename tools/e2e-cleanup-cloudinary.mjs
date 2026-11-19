@@ -16,8 +16,10 @@
 // Zabezpieczenia przy delete: manifest musi zgadzać się z CLOUDINARY_CLOUD, --confirm-cloud i --confirm-project; każdy identyfikator ma kształt
 // wycieczka/<podróż z manifestu>/<id>; każdy plik musi istnieć w Cloudinary, mieć typ authenticated i powstać po `since`
 // (jeśli choć jeden jest starszy lub nieznany, nic nie jest usuwane); najwyżej 50 plików; usuwane są tylko te identyfikatory.
-// Nie zapisuje plików na dysk (manifest idzie na stdout), nie wypisuje poświadczeń, adresów ani identyfikatorów plików.
+// Odmawia, jeśli plik manifestu leży w katalogu repozytorium. Nie zapisuje plików na dysk (manifest idzie na stdout), nie wypisuje poświadczeń, adresów ani identyfikatorów plików.
 import fs from 'node:fs';
+import nodePath from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const args = process.argv.slice(2);
 const mode = args[0];
@@ -64,6 +66,11 @@ if (mode === 'manifest') {
 if (mode !== 'delete') fail('Użycie: e2e-cleanup-cloudinary.mjs manifest|delete (patrz nagłówek skryptu).');
 const path = vals('manifest')[0];
 if (!path) fail('Podaj --manifest <plik>.');
+// Manifest nie może leżeć w repozytorium (łatwo go wtedy przypadkiem zacommitować): trzymaj go poza nim.
+const repoRoot = fs.realpathSync(fileURLToPath(new URL('..', import.meta.url)));
+let manifestReal;
+try { manifestReal = fs.realpathSync(path); } catch { fail('Manifest nieczytelny lub nie jest JSON.'); }
+if (manifestReal === repoRoot || manifestReal.startsWith(repoRoot + nodePath.sep)) fail('ODMOWA: manifest leży w katalogu repozytorium. Zapisz go poza nim, np. w ~/.cache/crewatlas-e2e/.');
 let m;
 try { m = JSON.parse(fs.readFileSync(path, 'utf8')); } catch { fail('Manifest nieczytelny lub nie jest JSON.'); }
 for (const k of ['CLOUDINARY_CLOUD', 'CLOUDINARY_API_KEY', 'CLOUDINARY_API_SECRET']) if (!e[k]) fail(`Brak zmiennej środowiskowej ${k}.`);

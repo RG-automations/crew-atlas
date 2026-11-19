@@ -95,3 +95,9 @@ branding-drafts/
 migration-state.json
 migration-state.json.tmp
 migration-backup/
+
+# A2 test cleanup manifests (exact ids of synthetic test files): keep outside the repo, never commit
+/manifest*.json
+/tools/manifest*.json
+/*.manifest.json
+/tools/*.manifest.json

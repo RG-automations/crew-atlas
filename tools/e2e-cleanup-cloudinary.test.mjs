@@ -123,6 +123,9 @@ if (process.argv[2] === 'child') {
   evil((b) => { b.since = 'nie-data'; }, /kształt/);
   evil((b) => { b.since = new Date(Date.now() + 86400000).toISOString(); }, /nie zgadza/); // plik starszy niż początek testów
   evil((b) => { b.resources = Array.from({ length: 51 }, (_, i) => ({ rt: 'image', id: `wycieczka/${T}/file${String(i).padStart(6, '0')}` })); }, /ponad 50/);
+  const inRepo = fileURLToPath(new URL('./.manifest-in-repo-test.json', import.meta.url));
+  fs.writeFileSync(inRepo, JSON.stringify(man));
+  try { neg(['delete', '--manifest', inRepo, '--confirm-cloud', 'demo-cloud', '--confirm-project', 'crewatlas-test', '--delete'], CL, 2, /w katalogu repozytorium/); } finally { fs.rmSync(inRepo, { force: true }); }
   neg(['delete', '--manifest', path.join(dir, 'brak.json'), '--confirm-cloud', 'demo-cloud', '--confirm-project', 'crewatlas-test'], CL, 2);
   neg(['delete', '--confirm-cloud', 'demo-cloud'], CL, 2);
   neg(['wipe'], CL, 2);

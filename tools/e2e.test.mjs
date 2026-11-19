@@ -19,7 +19,7 @@ if (process.argv[2] === 'child') {
   let src = fs.readFileSync(new URL('../worker/worker.js', import.meta.url), 'utf8');
   src = src.replace('export default {', 'const worker = {') + '\nexport { worker };';
   const { worker } = await import('data:text/javascript;base64,' + Buffer.from(src).toString('base64'));
-  const wenv = { CLOUDINARY_CLOUD: 'demo-cloud', CLOUDINARY_API_KEY: APIKEY_CLD, CLOUDINARY_API_SECRET: SECRET, FIREBASE_PROJECT_ID: 'proj',
+  const wenv = { ...(brk.includes('no-cloudinary') ? {} : { CLOUDINARY_CLOUD: 'demo-cloud', CLOUDINARY_API_KEY: APIKEY_CLD, CLOUDINARY_API_SECRET: SECRET }), FIREBASE_PROJECT_ID: 'proj',
     ...(brk.includes('no-media-secret') ? {} : { MEDIA_TOKEN_SECRET: 'media-secret-VALUE' }) };
   const { publicKey, privateKey } = await crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
   const jwk = { ...(await crypto.subtle.exportKey('jwk', publicKey)), kid: 'k1', alg: 'RS256', use: 'sig' };
@@ -135,7 +135,7 @@ if (process.argv[2] === 'child') {
       if (!usr || usr[1] !== password || !u.includes(`key=${FB_KEY}`)) return Response.json({ error: { message: 'INVALID_LOGIN_CREDENTIALS' } }, { status: 400 });
       return Response.json({ idToken: await jwt(usr[0]), localId: usr[0] });
     }
-    if (u.startsWith('https://w.example')) {
+    if (u.startsWith('https://w.example') || u.startsWith('https://crew-atlas-worker-test.')) {
       if (brk.includes('net-error-token') && u.endsWith('/media/token')) throw new Error('network down');
       return worker.fetch(new Request(u, init), wenv);
     }
@@ -148,7 +148,7 @@ if (process.argv[2] === 'child') {
   };
   process.on('exit', () => log.write('WORLD ' + JSON.stringify({ calls, memories: Object.keys(db.memories), assets: Object.keys(assets), members: db.trips[TRIP].memberIds }) + '\n'));
   process.argv.splice(2, 4, ...process.argv.slice(6));
-  await import(fileURLToPath(new URL(script === 'preflight' ? './e2e-preflight.mjs' : script === 'inspect' ? './e2e-inspect-media.mjs' : './e2e-api-check.mjs', import.meta.url)));
+  await import(fileURLToPath(new URL(script === 'preflight' ? './e2e-preflight.mjs' : script === 'inspect' ? './e2e-inspect-media.mjs' : script === 'auth' ? './e2e-auth-check.mjs' : './e2e-api-check.mjs', import.meta.url)));
 } else {
   const run = (script, args = [], env = {}, brk = '') => {
     const r = spawnSync(process.execPath, [here, 'child', 'x', script, 'x', ...args], {
@@ -263,6 +263,30 @@ if (process.argv[2] === 'child') {
   r = run('api', ['--expiry-test']);
   assert.match(r.out, /wygaśnięcie tokenu mediów/, 'plan na sucho wymienia test wygaśnięcia');
 
+  // ---- e2e-auth-check (etap 1, bez Cloudinary) ----
+  const TW = 'https://crew-atlas-worker-test.example';
+  r = run('auth', API, { WORKER_URL: TW }, 'no-cloudinary');
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /RESULT: PASS/);
+  assert.ok((r.out.match(/^PASS /gm) || []).length >= 30, `liczba PASS: ${(r.out.match(/^PASS /gm) || []).length}`);
+  assert.match(r.out, /media NIE były sprawdzane/); noLeak(r.out);
+  assert.deepEqual([r.world.memories, r.world.assets], [[], []], 'etap 1 niczego nie zapisuje');
+  assert.ok(!r.out.includes('cloudinary.com'));
+  r = run('auth', API, { WORKER_URL: TW });
+  assert.equal(r.code, 1, 'worker z Cloudinary na etapie 1 to FAIL (może być podłączony do prawdziwego konta)');
+  assert.match(r.out, /FAIL  \/sign: członek/);
+  r = run('auth', [...API, '--cloudinary-configured'], { WORKER_URL: TW });
+  assert.equal(r.code, 0, r.out);
+  r = run('auth', [...API, '--expiry-test'], { WORKER_URL: TW, FAKE_CLOCK: '1' }, 'no-cloudinary');
+  assert.equal(r.code, 0, r.out); assert.match(r.out, /PASS  wygaśnięcie: stary token mediów jest odrzucony/); assert.match(r.out, /PASS  wygaśnięcie: nowy token/);
+  for (const [env, label] of [[{ WORKER_URL: 'https://w.example' }, 'nie jest workerem testowym'], [{ WORKER_URL: TW, PROD_WORKER_URL: TW }, 'produkcyjny adres'], [{ WORKER_URL: TW, PROD_FIREBASE_PROJECT_ID: 'proj' }, 'produkcyjny projekt'], [{ WORKER_URL: 'http://crew-atlas-worker-test.example' }, 'http'], [{ WORKER_URL: 'https://crew-atlas-worker-test.evil.example/x', E2E_WORKER_NAME: 'inny' }, 'inna nazwa']]) {
+    r = run('auth', API, env, 'no-cloudinary');
+    assert.equal(r.code, 2, label); assert.equal(r.world.calls, 0, `${label}: zero żądań`);
+  }
+  r = run('auth', [], { WORKER_URL: TW });
+  assert.equal(r.code, 0); assert.equal(r.world.calls, 0, 'na sucho nic nie wychodzi');
+  r = run('auth', API, { WORKER_URL: TW }, 'no-cloudinary,stranger-is-member');
+  assert.equal(r.code, 1, 'obcy będący członkiem musi dać FAIL'); assert.match(r.out, /FAIL  token mediów: obcy/);
+
   // ---- e2e-inspect-media ----
   r = run('inspect', API, { SEED: 'clean' });
   assert.equal(r.code, 0, r.out); assert.match(r.out, /PASS  photo #1/);
@@ -295,7 +319,7 @@ if (process.argv[2] === 'child') {
   noLeak(pre().out);
 
   // pliki skryptów nie zapisują na dysk i nie zawierają zaszytych adresów ani kluczy
-  for (const f of ['e2e-api-check.mjs', 'e2e-preflight.mjs', 'e2e-inspect-media.mjs']) {
+  for (const f of ['e2e-api-check.mjs', 'e2e-preflight.mjs', 'e2e-inspect-media.mjs', 'e2e-auth-check.mjs']) {
     const t = fs.readFileSync(dir + f, 'utf8');
     assert.ok(!/writeFile|appendFile|createWriteStream/.test(t), `${f} nie zapisuje na dysk`);
     assert.ok(!new RegExp('AI' + 'za[0-9A-Za-z_-]{20}|workers' + '\\.dev').test(t), `${f} bez zaszytych kluczy i adresów`);

@@ -50,6 +50,7 @@ jobs:
       - run: node tools/e2e.test.mjs
       - run: node tools/inspect-media.test.mjs
       - run: node tools/e2e-cleanup-cloudinary.test.mjs
+      - run: node tools/e2e-seed-a2-trip.test.mjs
       - run: node worker/cloudinary-privacy-check.test.mjs
 
   firestore-rules:

@@ -22,9 +22,7 @@ Produkcyjny worker zostaje nietknięty. Nowy worker ma **inną nazwę i inny adr
 
    | Nazwa | Typ | Wartość testowa |
    |---|---|---|
-   | `CLOUDINARY_CLOUD` | Text | nazwa chmury (to samo konto, wariant B) |
-   | `CLOUDINARY_API_KEY` | Secret | z konsoli Cloudinary |
-   | `CLOUDINARY_API_SECRET` | Secret | z konsoli Cloudinary |
+   | `CLOUDINARY_CLOUD`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` | **etap 2, na razie NIE ustawiaj** | Etap 1 sprawdza autoryzację bez Cloudinary. Worker bez nich odpowiada 500 `not configured` na `/sign`, pliki i usuwanie (po autoryzacji). |
    | `FIREBASE_PROJECT_ID` | Text | id projektu **testowego** (`crewatlas-test-…`) |
    | `MEDIA_TOKEN_SECRET` | Secret | **nowy** losowy ciąg, np. `openssl rand -hex 24`, inny niż produkcyjny |
    | `MEDIA_TOKEN_TTL` | Text | `120` na czas testów wygaśnięcia (minimum workera to 60) |
@@ -34,6 +32,20 @@ Produkcyjny worker zostaje nietknięty. Nowy worker ma **inną nazwę i inny adr
 5. Wpisz adres do `~/crewatlas-test/config.local.json` jako `WORKER_URL` (nie jest sekretem, ale nie commitujemy go). Klucz MapTiler już tam jest.
 
 Po testach: usuń workera testowego i wpisz `MEDIA_TOKEN_TTL` z powrotem na 600 w każdym workerze, który zostaje.
+
+### Etap 1: autoryzacja bez Cloudinary
+
+```bash
+export WORKER_URL=https://crew-atlas-worker-test.<twoja-subdomena>.workers.dev
+export PROD_WORKER_URL=<adres produkcyjnego workera> PROD_FIREBASE_PROJECT_ID=<id projektu produkcyjnego>
+node tools/e2e-preflight.mjs
+# zmienne E2E_* i FIREBASE_*: jak w kroku 3 (hasła przez read -rs). Potrzebne konto spoza podróży (obcy).
+node tools/e2e-auth-check.mjs                                   # na sucho
+node tools/e2e-auth-check.mjs --i-am-using-test-services        # wykonanie
+node tools/e2e-auth-check.mjs --i-am-using-test-services --expiry-test   # po zmianie TTL na 120: ok. 2 minut
+```
+
+Skrypt odmawia, jeśli adres nie zaczyna się od `crew-atlas-worker-test.` albo jest produkcyjny, i zgłasza FAIL, jeśli worker ma już skonfigurowane Cloudinary (na etapie 1 nie powinien). Zaliczenie dotyczy wyłącznie autoryzacji. **`ALLOWED_UIDS` nie ustawiaj na etapie 1:** ukryłoby test członkostwa (obcy dostałby 403 z innego powodu). Fikcyjne konta chroni wyłączenie samodzielnej rejestracji w testowym Firebase (Authentication, ustawienia akcji użytkownika).
 
 ## Krok 2: kontrola workera (bez logowania)
 
