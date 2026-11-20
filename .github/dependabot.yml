@@ -1,18 +1,27 @@
 version: 2
+# Version updates are paused: open-pull-requests-limit: 0 opens no version-update PRs.
+# Security updates are a separate mechanism (triggered by advisories, not by this schedule); they also
+# need "Dependabot alerts" and "Dependabot security updates" enabled in the repository settings.
+# To resume regular updates, raise the limits (and consider groups and ignoring major versions).
+# functions/ is kept on purpose: it is inactive and has no lockfile, but its vulnerabilities should still be detected.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 0
   - package-ecosystem: pub
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 0
   - package-ecosystem: npm
     directory: /rules-test
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 0
   - package-ecosystem: npm
     directory: /functions
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 0
